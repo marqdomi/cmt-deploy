@@ -1,0 +1,8 @@
+.env
+.env.prod
+.env.prod.local
+nginx/certs/*
+!.gitkeep
+*.pem
+*.key
+*.crt

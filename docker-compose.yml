@@ -1,0 +1,119 @@
+services:
+  backend:
+    build: ./app/backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/backend:/app
+    env_file:
+      - ./.env
+      - ./.env.prod
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "443:443"
+      # - "80:80"
+    volumes:
+      - ./app/frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=certmgr
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./app/frontend:/app
+      - /app/node_modules
+    env_file:
+      - ./.env
+    depends_on:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: ./app/backend
+      dockerfile: Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - CELERY_ARGS=${CELERY_ARGS:-}
+      - CELERY_LOGLEVEL=${CELERY_LOGLEVEL:-info}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-10}
+      - CELERY_PREFETCH=${CELERY_PREFETCH:-1}
+    env_file:
+      - ./.env
+      - ./.env.prod
+    volumes:
+      - ./app/backend:/app
+    command: /bin/sh -lc 'celery -A core.celery_worker.celery_app worker -c ${CELERY_CONCURRENCY:-10} --prefetch-multiplier=${CELERY_PREFETCH:-1} -Ofair ${CELERY_ARGS:-} ${CELERY_POOL:+--pool=${CELERY_POOL}} --loglevel=${CELERY_LOGLEVEL:-info}'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: ./app/backend
+      dockerfile: Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - ./.env
+      - ./.env.prod
+    volumes:
+      - ./app/backend:/app
+    command: celery -A core.celery_worker.celery_app beat --loglevel=info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
