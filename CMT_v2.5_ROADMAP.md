@@ -167,15 +167,336 @@ backend/services/f5/
 
 ---
 
-### Feature 4: Mejoras de Seguridad
+### Feature 4: Mejoras de Seguridad (Expandido)
 
 **Estado**: 📋 Planificado  
-**Prioridad**: Alta
+**Prioridad**: Alta  
+**Severidad de hallazgos**: 🔴 5 High, 🟡 4 Medium
 
-- [ ] Rotación automática de encryption key
-- [ ] Audit log de todas las operaciones de certificados
-- [ ] Rate limiting por usuario/IP
-- [ ] Validación de certificados antes de deploy (chain validation)
+#### 🔴 Issues de Alta Severidad
+
+| Issue | Archivo | Solución |
+|-------|---------|----------|
+| Credenciales DB por defecto en código | `config.py:7` | Requerir `.env` explícito, fallar si no existe |
+| Chain name hardcodeado | Múltiples archivos | Variable de entorno `DEFAULT_CERT_CHAIN` |
+| JWT secret fallback a ENCRYPTION_KEY | `config.py:17-21` | Separar secrets, eliminar fallback inseguro |
+| Private keys expuestas sin rate limiting | `certificates.py:375` | Agregar rate limit + audit log obligatorio |
+| Debug logging en producción | `api.js:20` | Condicionar a `NODE_ENV !== 'production'` |
+
+#### 🟡 Issues de Media Severidad
+
+| Issue | Archivo | Solución |
+|-------|---------|----------|
+| CORS con wildcard en métodos | `main.py:27-32` | Restringir a `GET, POST, PUT, DELETE` específicos |
+| Token JWT en localStorage | `AuthContext.jsx` | Migrar a httpOnly cookies (XSS protection) |
+| Sin validación de complejidad de password | `auth_service.py` | Regex: min 8 chars, mayúscula, número, especial |
+| Input sin sanitizar en cert_name | `f5_service_logic.py:27` | Sanitizar para prevenir command injection |
+
+#### Implementación Propuesta
+
+```python
+# app/backend/core/config.py - ANTES
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cmt:cmt@localhost:5432/cmt")
+
+# app/backend/core/config.py - DESPUÉS  
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is required")
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    raise ValueError("JWT_SECRET_KEY environment variable is required")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+if not ENCRYPTION_KEY:
+    raise ValueError("ENCRYPTION_KEY environment variable is required")
+```
+
+```python
+# app/backend/api/endpoints/certificates.py - Rate limiting para private keys
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@router.get("/{cert_id}/private-key")
+@limiter.limit("5/minute")  # Max 5 requests por minuto
+async def get_private_key(cert_id: int, request: Request, ...):
+    # Audit log obligatorio
+    await audit_service.log(
+        action="PRIVATE_KEY_ACCESS",
+        user=current_user.username,
+        resource=f"certificate:{cert_id}",
+        ip=request.client.host
+    )
+    ...
+```
+
+#### Checklist de Seguridad
+
+- [ ] Eliminar todos los valores por defecto de credenciales
+- [ ] Separar JWT_SECRET_KEY de ENCRYPTION_KEY
+- [ ] Implementar rate limiting en endpoints sensibles
+- [ ] Migrar token a httpOnly cookies
+- [ ] Agregar validación de password
+- [ ] Sanitizar input de cert_name
+- [ ] Configurar CORS restrictivo
+- [ ] Remover console.debug en producción
+
+---
+
+### Feature 4.1: Mejoras de Código y Performance (NUEVO)
+
+**Estado**: 📋 Planificado  
+**Prioridad**: Media  
+**Severidad de hallazgos**: 🔴 3 High (Performance), 🟡 7 Medium
+
+#### 🔴 Issues de Performance (Alta Severidad)
+
+| Issue | Archivo | Impacto | Solución |
+|-------|---------|---------|----------|
+| N+1 queries en `get_cert_info` | `f5_service_logic.py:39-180` | Lentitud con muchos certs | Eager loading con `joinedload()` |
+| API calls secuenciales para decrypt | `certificates.py:144-153` | Latencia acumulada | Batch decrypt operation |
+| Cache age API call innecesario | `CertificateTable.jsx:168` | Request extra por render | Consolidar con profile lookup |
+
+```python
+# ANTES - N+1 Query Problem
+def get_certificates():
+    certs = db.query(Certificate).all()
+    for cert in certs:
+        device = db.query(Device).filter(Device.id == cert.device_id).first()  # N queries!
+
+# DESPUÉS - Eager Loading
+def get_certificates():
+    certs = db.query(Certificate).options(
+        joinedload(Certificate.device)
+    ).all()  # 1 query con JOIN!
+```
+
+#### 🟡 Issues de Código (Media Severidad)
+
+| Issue | Archivo | Solución |
+|-------|---------|----------|
+| 20+ `print()` statements | Múltiples backends | Migrar a `logging` module |
+| Comentarios mezclados español/inglés | Todo el código | Estandarizar a inglés |
+| Sin type hints en services | `services/*.py` | Agregar type annotations |
+| Error handling inconsistente | `certificates.py:541-567` | Custom exception classes |
+| Código duplicado deploy PFX/PEM | `certificates.py:326-400` | Extraer helper común |
+| Magic strings para status | Múltiples | Usar `Enum` types |
+| Sin paginación en `/devices` | `devices.py:37` | Agregar `limit/offset` params |
+
+#### Implementación: Sistema de Logging
+
+```python
+# app/backend/core/logger.py (NUEVO)
+import logging
+from logging.handlers import RotatingFileHandler
+
+def setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    
+    # Console handler
+    console = logging.StreamHandler()
+    console.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+    logger.addHandler(console)
+    
+    # File handler con rotación
+    file_handler = RotatingFileHandler(
+        'logs/cmt.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+    ))
+    logger.addHandler(file_handler)
+    
+    return logger
+
+# Uso en servicios
+from core.logger import setup_logger
+logger = setup_logger(__name__)
+
+# ANTES
+print(f"Connecting to F5: {device.ip}")
+
+# DESPUÉS
+logger.info(f"Connecting to F5: {device.ip}")
+```
+
+#### Implementación: Custom Exceptions
+
+```python
+# app/backend/core/exceptions.py (NUEVO)
+class CMTException(Exception):
+    """Base exception for CMT"""
+    def __init__(self, message: str, code: str = "CMT_ERROR"):
+        self.message = message
+        self.code = code
+        super().__init__(self.message)
+
+class F5ConnectionError(CMTException):
+    def __init__(self, device_ip: str, original_error: str):
+        super().__init__(
+            f"Failed to connect to F5 {device_ip}: {original_error}",
+            code="F5_CONNECTION_ERROR"
+        )
+
+class CertificateNotFoundError(CMTException):
+    def __init__(self, cert_id: int):
+        super().__init__(
+            f"Certificate {cert_id} not found",
+            code="CERT_NOT_FOUND"
+        )
+
+class InvalidCredentialsError(CMTException):
+    def __init__(self):
+        super().__init__(
+            "Invalid username or password",
+            code="INVALID_CREDENTIALS"
+        )
+
+# Exception handler en main.py
+@app.exception_handler(CMTException)
+async def cmt_exception_handler(request: Request, exc: CMTException):
+    return JSONResponse(
+        status_code=400,
+        content={"error": exc.code, "message": exc.message}
+    )
+```
+
+#### Checklist de Código
+
+- [ ] Implementar eager loading para queries con relaciones
+- [ ] Batch decrypt operations
+- [ ] Migrar print() → logging module
+- [ ] Agregar type hints a todos los services
+- [ ] Crear custom exception classes
+- [ ] Extraer código común de deploy PFX/PEM
+- [ ] Agregar paginación a endpoint de devices
+- [ ] Crear Enums para status values
+
+---
+
+### Feature 4.2: Mejoras de UX/Frontend (NUEVO)
+
+**Estado**: 📋 Planificado  
+**Prioridad**: Media  
+**Severidad de hallazgos**: 🟡 4 Medium, 🟢 4 Low
+
+#### 🟡 Issues de Media Severidad
+
+| Issue | Componente | Solución |
+|-------|------------|----------|
+| Sin loading state en search | `CertificateTable.jsx:36` | Agregar spinner durante debounce |
+| Errores exponen detalles internos | API responses | Sanitizar mensajes de error |
+| Sin retry para conexiones F5 | `f5_service_logic.py:87` | Exponential backoff |
+| 11 `console.log` en producción | Múltiples JSX | Remover o usar logger condicional |
+
+#### 🟢 Issues de Baja Severidad (Nice to Have)
+
+| Issue | Componente | Solución |
+|-------|------------|----------|
+| Sin export CSV/JSON | `CertificateTable.jsx` | Botón de exportación |
+| Sin keyboard shortcuts | Todo el frontend | `Ctrl+F` buscar, `Ctrl+N` nuevo |
+| Theme preference no persiste | `ThemeContext.jsx` | Guardar en localStorage |
+| Falta bulk operations | Múltiples vistas | Checkbox + batch actions |
+| Sin ARIA labels | Componentes interactivos | Accessibility improvements |
+
+#### Implementación: Export Functionality
+
+```jsx
+// app/frontend/src/components/ExportButton.jsx (NUEVO)
+import { Button, Menu, MenuItem } from '@mui/material';
+import { Download } from '@mui/icons-material';
+
+export const ExportButton = ({ certificates }) => {
+  const [anchorEl, setAnchorEl] = useState(null);
+  
+  const exportCSV = () => {
+    const headers = ['Name', 'Expiry Date', 'Device', 'Status'];
+    const rows = certificates.map(cert => [
+      cert.name,
+      cert.expiry_date,
+      cert.device_name,
+      cert.usage_state
+    ]);
+    
+    const csv = [headers, ...rows]
+      .map(row => row.join(','))
+      .join('\n');
+    
+    downloadFile(csv, 'certificates.csv', 'text/csv');
+  };
+  
+  const exportJSON = () => {
+    const json = JSON.stringify(certificates, null, 2);
+    downloadFile(json, 'certificates.json', 'application/json');
+  };
+  
+  return (
+    <>
+      <Button startIcon={<Download />} onClick={(e) => setAnchorEl(e.target)}>
+        Export
+      </Button>
+      <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
+        <MenuItem onClick={exportCSV}>Export as CSV</MenuItem>
+        <MenuItem onClick={exportJSON}>Export as JSON</MenuItem>
+      </Menu>
+    </>
+  );
+};
+```
+
+#### Implementación: Retry con Exponential Backoff
+
+```python
+# app/backend/core/retry.py (NUEVO)
+import asyncio
+from functools import wraps
+from typing import Callable, Type
+
+def with_retry(
+    max_attempts: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+    exceptions: tuple = (Exception,)
+):
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_attempts):
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
+                        await asyncio.sleep(delay)
+            raise last_exception
+        return wrapper
+    return decorator
+
+# Uso
+@with_retry(max_attempts=3, base_delay=2.0, exceptions=(F5ConnectionError,))
+async def connect_to_f5(device: Device):
+    ...
+```
+
+#### Checklist de UX
+
+- [ ] Loading states en todas las operaciones async
+- [ ] Sanitizar error messages para usuarios
+- [ ] Implementar retry con backoff
+- [ ] Remover console.log en producción
+- [ ] Agregar export CSV/JSON
+- [ ] Keyboard shortcuts
+- [ ] Persistir theme preference
+- [ ] ARIA labels para accesibilidad
 
 ---
 
@@ -1467,11 +1788,14 @@ async def certificate_deployments_report(
 ## 📅 Timeline Tentativo
 
 ```
-Diciembre 2025:
+Diciembre 2024:
 ├── Semana 1: ✅ Phase 1 Cleanup completado
 ├── Semana 2: Feature 1 - Real-Time Usage (Backend)
 ├── Semana 3: Feature 1 - Real-Time Usage (Frontend)
-└── Semana 4: Feature 2 - Cleanup código legacy
+└── Semana 4: Feature 4 - Security Hardening (High severity)
+    ├── Eliminar credenciales por defecto
+    ├── Separar JWT_SECRET de ENCRYPTION_KEY
+    └── Rate limiting en endpoints sensibles
 
 Enero 2025:
 ├── Semana 1-2: Feature 6 - Azure Container Apps + CI/CD
@@ -1489,10 +1813,21 @@ Enero 2025:
     └── Documentación
 
 Febrero 2025:
-├── Feature 3 - Refactor f5_service_logic.py
-├── Feature 4 - Mejoras de seguridad adicionales
-├── Feature 5 - Dashboard de métricas
-└── 🎉 Release v2.5 
+├── Semana 1: Feature 4.1 - Code Quality & Performance
+│   ├── Fix N+1 queries
+│   ├── Migrar print() → logging
+│   ├── Custom exception classes
+│   └── Type hints en services
+├── Semana 2: Feature 4.2 - UX Improvements
+│   ├── Export CSV/JSON
+│   ├── Retry con exponential backoff
+│   ├── Loading states
+│   └── Remover console.log producción
+├── Semana 3: Feature 2-3 - Cleanup & Refactor
+│   ├── Eliminar código legacy cache
+│   └── Refactor f5_service_logic.py
+└── Semana 4: Feature 5 - Dashboard métricas + Release
+    └── 🎉 Release v2.5 
 
 Marzo-Abril 2025 (v3.0):
 ├── Semana 1-2: Feature 8 - CA Integration Layer
@@ -1516,18 +1851,47 @@ Marzo-Abril 2025 (v3.0):
 
 ### Priorización de Features
 
-| # | Feature | Versión | Prioridad | Impacto |
-|---|---------|---------|-----------|---------|
-| 1 | Real-Time Usage Detection | v2.5 | Alta | Precisión datos |
-| 6 | Azure Container Apps | v2.5 | Alta | Estabilidad + CI/CD |
-| 7 | Azure AD SSO + RBAC | v2.5 | Alta | Seguridad enterprise |
-| 2 | Cleanup código legacy | v2.5 | Media | Mantenibilidad |
-| 3 | Refactor f5_service_logic | v2.5 | Media | Código limpio |
-| 4 | Mejoras de seguridad | v2.5 | Media | Compliance |
-| 5 | Dashboard métricas | v2.5 | Baja | UX |
-| **8** | **CA Integration Layer** | **v3.0** | **Alta** | **Zero-touch renewals** |
-| **9** | **Renewal Policies** | **v3.0** | **Alta** | **Automatización inteligente** |
-| **10** | **Audit & Compliance** | **v3.0** | **Media** | **Enterprise compliance** |
+| # | Feature | Versión | Prioridad | Impacto | Severidad |
+|---|---------|---------|-----------|---------|-----------|
+| 4 | **Security Hardening** | v2.5 | 🔴 Alta | Compliance | 5 High, 4 Medium |
+| 1 | Real-Time Usage Detection | v2.5 | 🔴 Alta | Precisión datos | - |
+| 6 | Azure Container Apps | v2.5 | 🔴 Alta | Estabilidad + CI/CD | - |
+| 7 | Azure AD SSO + RBAC | v2.5 | 🔴 Alta | Seguridad enterprise | - |
+| 4.1 | **Code Quality & Performance** | v2.5 | 🟡 Media | Performance | 3 High, 7 Medium |
+| 4.2 | **UX Improvements** | v2.5 | 🟡 Media | User experience | 4 Medium, 4 Low |
+| 2 | Cleanup código legacy | v2.5 | 🟡 Media | Mantenibilidad | - |
+| 3 | Refactor f5_service_logic | v2.5 | 🟡 Media | Código limpio | - |
+| 5 | Dashboard métricas | v2.5 | 🟢 Baja | UX | - |
+| **8** | **CA Integration Layer** | **v3.0** | 🔴 Alta | Zero-touch renewals | - |
+| **9** | **Renewal Policies** | **v3.0** | 🔴 Alta | Automatización | - |
+| **10** | **Audit & Compliance** | **v3.0** | 🟡 Media | Enterprise compliance | - |
+
+### Resumen de Hallazgos del Análisis
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│               ANÁLISIS DE CÓDIGO - RESUMEN                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  🔴 HIGH SEVERITY (8 issues)                                   │
+│  ├── 5 Security issues (credentials, JWT, rate limiting)       │
+│  └── 3 Performance issues (N+1 queries, sequential calls)      │
+│                                                                 │
+│  🟡 MEDIUM SEVERITY (15 issues)                                │
+│  ├── 7 Code quality (print, type hints, exceptions)            │
+│  ├── 4 Security (CORS, localStorage, validation)               │
+│  └── 4 UX (loading states, errors, retry)                      │
+│                                                                 │
+│  🟢 LOW SEVERITY (19 issues)                                   │
+│  ├── 5 Technical debt (TODOs, deprecated code)                 │
+│  ├── 5 Code quality (Enums, pagination, imports)               │
+│  ├── 5 Missing features (audit, bulk ops, health check)        │
+│  └── 4 UX (export, keyboard, accessibility)                    │
+│                                                                 │
+│  TOTAL: 42 issues identificados                                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ### Comparativa: Manual vs Automatizado
 
@@ -1538,6 +1902,8 @@ Marzo-Abril 2025 (v3.0):
 | Errores humanos | Posibles | Reducidos | Eliminados |
 | Cobertura audit | Parcial | Completa | Compliance-ready |
 | Escalabilidad | 100 certs | 500 certs | 10,000+ certs |
+| Vulnerabilidades conocidas | 8 High | 0 High | 0 High |
+| Code quality score | ~60% | ~85% | ~95% |
 
 ---
 
