@@ -372,40 +372,63 @@ async def cmt_exception_handler(request: Request, exc: CMTException):
 - [ ] Implementar eager loading para queries con relaciones
 - [ ] Batch decrypt operations
 - [ ] Migrar print() → logging module
-- [ ] Agregar type hints a todos los services
-- [ ] Crear custom exception classes
+- [x] Agregar type hints a todos los services
+- [x] Crear custom exception classes
 - [ ] Extraer código común de deploy PFX/PEM
 - [ ] Agregar paginación a endpoint de devices
-- [ ] Crear Enums para status values
+- [x] Crear Enums para status values
 
 ---
 
 ### Feature 4.2: Mejoras de UX/Frontend (NUEVO)
 
-**Estado**: 📋 Planificado  
+**Estado**: ✅ Completado  
 **Prioridad**: Media  
 **Severidad de hallazgos**: 🟡 4 Medium, 🟢 4 Low
 
 #### 🟡 Issues de Media Severidad
 
-| Issue | Componente | Solución |
-|-------|------------|----------|
-| Sin loading state en search | `CertificateTable.jsx:36` | Agregar spinner durante debounce |
-| Errores exponen detalles internos | API responses | Sanitizar mensajes de error |
-| Sin retry para conexiones F5 | `f5_service_logic.py:87` | Exponential backoff |
-| 11 `console.log` en producción | Múltiples JSX | Remover o usar logger condicional |
+| Issue | Componente | Solución | Estado |
+|-------|------------|----------|--------|
+| Sin loading state en search | `CertificateTable.jsx:36` | Ya existía spinner | ✅ |
+| Errores exponen detalles internos | API responses | CMTException + handler en main.py | ✅ |
+| Sin retry para conexiones F5 | `f5_service_logic.py` | `core/retry.py` + `_connect_to_f5()` | ✅ |
+| 11 `console.log` en producción | Múltiples JSX | Ya envueltos en `import.meta.env.DEV` | ✅ |
 
 #### 🟢 Issues de Baja Severidad (Nice to Have)
 
-| Issue | Componente | Solución |
-|-------|------------|----------|
-| Sin export CSV/JSON | `CertificateTable.jsx` | Botón de exportación |
-| Sin keyboard shortcuts | Todo el frontend | `Ctrl+F` buscar, `Ctrl+N` nuevo |
-| Theme preference no persiste | `ThemeContext.jsx` | Guardar en localStorage |
-| Falta bulk operations | Múltiples vistas | Checkbox + batch actions |
-| Sin ARIA labels | Componentes interactivos | Accessibility improvements |
+| Issue | Componente | Solución | Estado |
+|-------|------------|----------|--------|
+| Sin export CSV/JSON | `CertificateTable.jsx` | `ExportButton.jsx` creado | ✅ |
+| Sin keyboard shortcuts | Todo el frontend | Diferido | 📋 |
+| Theme preference no persiste | `ThemeContext.jsx` | Ya usa localStorage | ✅ |
+| Falta bulk operations | Múltiples vistas | Diferido (v2.6) | 📋 |
+| Sin ARIA labels | Componentes interactivos | Diferido (v2.6) | 📋 |
 
-#### Implementación: Export Functionality
+#### Implementación Realizada
+
+**Backend - Retry con Exponential Backoff:**
+```python
+# core/retry.py (NUEVO)
+@retry_with_backoff(max_retries=2, base_delay=2.0, exceptions=(ConnectionError, F5SDKError))
+def _connect_to_f5(hostname, username, password) -> ManagementRoot:
+    """Conexión centralizada con retry automático"""
+```
+
+- Reemplazadas 15 llamadas directas a `ManagementRoot()` con `_connect_to_f5()`
+- Retry automático 2 intentos con backoff exponencial (2s, 4s)
+- Logging integrado de intentos fallidos
+
+**Frontend - Export Button:**
+```jsx
+// components/ExportButton.jsx (NUEVO)
+<ExportButton certificates={displayCerts} filenamePrefix="cmt_certificates" />
+```
+- CSV export con escape de caracteres especiales
+- JSON export formateado
+- Integrado en InventoryPage
+
+#### Código de Ejemplo Original (Referencia)
 
 ```jsx
 // app/frontend/src/components/ExportButton.jsx (NUEVO)
