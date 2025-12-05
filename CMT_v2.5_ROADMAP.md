@@ -1785,51 +1785,371 @@ async def certificate_deployments_report(
 
 ---
 
-## 📅 Timeline Tentativo
+### Feature 11: Master Certificate Registry (Multi-Target Tracking)
+
+**Estado**: 📋 Planificado  
+**Prioridad**: 🔴 Alta  
+**Versión**: v2.5  
+**Esfuerzo estimado**: 1 semana  
+**Dependencias**: Feature 7 (Azure AD SSO) para RBAC por equipo
+
+#### Problema Actual
+
+El modelo actual de CMT está centrado en **certificados por dispositivo F5**, pero en la realidad un mismo certificado (mismo CNAME) se despliega en múltiples destinos:
+
+| Destino | Ejemplo | Equipo Responsable |
+|---------|---------|-------------------|
+| Load Balancer | F5-EMEA-1, F5-US-WEST | Network Team |
+| Cloud | AWS ALB, Azure App GW | Cloud Ops |
+| Servidores Locales | srv-web-01, srv-app-02 | SysAdmins |
+| CDN | Cloudflare, Akamai | Network/Cloud |
+
+**Problemas de sincronización actuales:**
+- NOC llama al equipo equivocado (el que ya renovó)
+- No hay visibilidad de qué destinos faltan por renovar
+- Cada equipo trabaja en silos sin saber el estado global
+- Certificados "parcialmente renovados" causan incidentes
+
+#### Solución: Master Certificate Registry
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  MASTER CERTIFICATE REGISTRY                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                   MasterCertificate                       │   │
+│  │  - common_name: "*.solera.com"                           │   │
+│  │  - expiration: 2025-02-15                                │   │
+│  │  - overall_status: "PARTIAL" (2/4 completados)           │   │
+│  │  - owner_team: Security                                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│              ┌───────────────┼───────────────┬───────────────┐  │
+│              ▼               ▼               ▼               ▼  │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐   │
+│  │  DeployTarget   │ │  DeployTarget   │ │  DeployTarget   │...│
+│  │  type: LB       │ │  type: LB       │ │  type: CLOUD    │   │
+│  │  name: F5-EMEA  │ │  name: F5-US    │ │  name: AWS-ALB  │   │
+│  │  status: ✅     │ │  status: ✅     │ │  status: ⏳     │   │
+│  │  team: Network  │ │  team: Network  │ │  team: Cloud    │   │
+│  │  by: jsmith     │ │  by: jsmith     │ │  pending...     │   │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Modelo de Datos
+
+```python
+# app/backend/db/models.py - Nuevos modelos
+
+class TargetType(str, enum.Enum):
+    LOAD_BALANCER = "lb"        # F5, Citrix, Netscaler
+    CLOUD = "cloud"              # AWS ALB, Azure App GW, GCP LB
+    LOCAL_SERVER = "local"       # Windows/Linux servers
+    CDN = "cdn"                  # Cloudflare, Akamai
+    OTHER = "other"
+
+class RenewalTargetStatus(str, enum.Enum):
+    PENDING = "pending"          # Necesita renovación
+    IN_PROGRESS = "in_progress"  # Alguien está trabajando
+    COMPLETED = "completed"       # ✅ Renovado
+    FAILED = "failed"            # ❌ Falló
+    NOT_APPLICABLE = "na"        # No aplica este ciclo
+
+class ResponsibleTeam(str, enum.Enum):
+    NETWORK = "network"          # Network Admins - F5, LB
+    CLOUD = "cloud"              # Cloud Ops - AWS, Azure, GCP
+    SYSADMIN = "sysadmin"        # SysAdmins - Local servers
+    SECURITY = "security"        # Security team
+    NOC = "noc"                  # NOC para escalación
+
+class MasterCertificate(Base):
+    """
+    Certificado lógico (por CNAME) desplegado en múltiples destinos.
+    Esta es la "fuente de verdad" para el estado global de renovación.
+    """
+    __tablename__ = "master_certificates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    common_name = Column(String, unique=True, index=True, nullable=False)
+    friendly_name = Column(String, nullable=True)
+    issuer = Column(String, nullable=True)
+    current_expiration = Column(DateTime, index=True, nullable=False)
+    new_expiration = Column(DateTime, nullable=True)
+    owner_team = Column(Enum(ResponsibleTeam), default=ResponsibleTeam.SECURITY)
+    renewal_lead = Column(String, nullable=True)
+    overall_status = Column(String, default="pending")  # pending | partial | complete
+    completed_targets = Column(Integer, default=0)
+    total_targets = Column(Integer, default=0)
+    renewal_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    targets = relationship("DeploymentTarget", back_populates="master_cert", 
+                          cascade="all, delete-orphan")
+
+class DeploymentTarget(Base):
+    """
+    Destino específico donde el certificado debe desplegarse.
+    """
+    __tablename__ = "deployment_targets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    master_cert_id = Column(Integer, ForeignKey("master_certificates.id", ondelete="CASCADE"))
+    target_type = Column(Enum(TargetType), nullable=False)
+    target_name = Column(String, nullable=False)
+    target_region = Column(String, nullable=True)  # EMEA, US, APAC
+    f5_certificate_id = Column(Integer, ForeignKey("certificates.id"), nullable=True)
+    responsible_team = Column(Enum(ResponsibleTeam), nullable=False)
+    status = Column(Enum(RenewalTargetStatus), default=RenewalTargetStatus.PENDING)
+    status_updated_by = Column(String, nullable=True)
+    status_updated_at = Column(DateTime, nullable=True)
+    status_notes = Column(Text, nullable=True)
+    
+    master_cert = relationship("MasterCertificate", back_populates="targets")
+```
+
+#### Mapeo de Grupos AD → Equipos
+
+| Grupo Windows AD | ResponsibleTeam | Target Types |
+|------------------|-----------------|--------------|
+| `SG-Network-Admins` | NETWORK | LB (F5, Citrix) |
+| `SG-Network-Operators` | NETWORK | LB (F5, Citrix) |
+| `SG-Cloud-Ops` | CLOUD | AWS ALB, Azure App GW |
+| `SG-SysAdmins` | SYSADMIN | Local servers |
+| `SG-Security-Team` | SECURITY | All (owner) |
+| `SG-NOC` | NOC | Read-only + escalation |
+
+#### API Endpoints
+
+```python
+# app/backend/api/endpoints/master_certs.py (NUEVO)
+
+router = APIRouter(prefix="/master-certs", tags=["Master Certificates"])
+
+@router.get("/")
+async def list_master_certificates(
+    status: Optional[str] = Query(None),  # pending|partial|complete
+    team: Optional[str] = Query(None),
+    expiring_days: Optional[int] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Lista certificados maestros - Vista principal para NOC"""
+
+@router.get("/dashboard")
+async def get_renewal_dashboard(db: Session = Depends(get_db)):
+    """Dashboard summary para NOC - estado global rápido"""
+
+@router.put("/targets/{target_id}/status")
+async def update_target_status(
+    target_id: int,
+    update: RenewalStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Actualiza estado de renovación de un target específico"""
+
+@router.post("/sync-from-f5")
+async def sync_master_certs_from_f5(db: Session = Depends(get_db)):
+    """Sincroniza certificados de F5 con el Master Registry"""
+```
+
+#### UI: Vista NOC Dashboard
+
+```jsx
+// Vista principal para NOC
+// - Cards: Complete / Partial / Pending / Expiring 30 days
+// - Alert: Pendientes por equipo (Network: X, Cloud: Y, SysAdmin: Z)
+// - Table: Certificados con targets expandibles
+// - Actions: Marcar como completado, llamar a equipo
+```
+
+#### Base de Datos: PostgreSQL en Azure
+
+**Decisión**: Continuar con PostgreSQL (no Cosmos DB)
+
+| Criterio | PostgreSQL | Cosmos DB |
+|----------|-----------|-----------|
+| Modelo de datos | ✅ Relacional (Master → Targets) | ⚠️ Document-based |
+| JOINs | ✅ Nativo | ❌ Cross-partition costoso |
+| Costo | ✅ ~$15-30/mes | ❌ ~$25-100/mes |
+| Migración | ✅ Ya usas PostgreSQL | ⚠️ Cambio de paradigma |
+| Transacciones | ✅ ACID completo | ⚠️ Limited |
+
+#### Tareas Post-Implementación
+
+Al completar Feature 11, revisar:
+
+**1. Importación de datos inicial**
+- [ ] Preparar CSV con certificados y destinos actuales
+- [ ] Formato: `common_name,expiration,target_type,target_name,region,team`
+- [ ] Ejecutar script de importación
+- [ ] Validar datos importados
+
+**2. Notificaciones automáticas**
+- [ ] Email cuando certificado está "Partial" por >3 días
+- [ ] Integración Microsoft Teams (webhook)
+- [ ] Escalación automática al NOC si no hay progreso
+
+**3. Integración con sistemas externos** (opcional v2.5+)
+- [ ] ServiceNow CMDB para servidores locales
+- [ ] AWS Certificate Manager para auto-discovery
+- [ ] Azure Key Vault integration
+
+#### Checklist de Implementación
+
+- [ ] Crear modelos `MasterCertificate` y `DeploymentTarget`
+- [ ] Crear migración Alembic
+- [ ] Implementar endpoints API
+- [ ] Crear componente `MasterCertDashboard.jsx`
+- [ ] Implementar sync automático desde F5
+- [ ] Script de importación CSV
+- [ ] Tests unitarios
+- [ ] Documentación de uso para NOC
+
+---
+
+## 📅 Timeline Tentativo (Ordenado por Dependencias)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    GRAFO DE DEPENDENCIAS v2.5                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Phase 1 ✅                                                      │
+│      │                                                           │
+│      ▼                                                           │
+│  Feature 4 (Security) ─────┬─────────────────────┐              │
+│      │                     │                     │              │
+│      ▼                     ▼                     ▼              │
+│  Feature 1          Feature 4.1           Feature 4.2          │
+│  (Real-Time)        (Code Quality)        (UX)                  │
+│      │                     │                     │              │
+│      └─────────┬───────────┘                     │              │
+│                │                                 │              │
+│                ▼                                 │              │
+│  Feature 2-3 (Cleanup & Refactor) ◄──────────────┘              │
+│                │                                                 │
+│                ▼                                                 │
+│  Feature 6 (Azure Container Apps) ──────────────┐               │
+│                │                                │               │
+│                ▼                                │               │
+│  Feature 7 (Azure AD SSO + RBAC) ◄──────────────┘               │
+│                │                                                 │
+│                ▼                                                 │
+│  Feature 11 (Master Cert Registry) ─────────────┐               │
+│                │                                │               │
+│                ▼                                ▼               │
+│  Feature 5 (Dashboard) ◄────────────────────────┘               │
+│                │                                                 │
+│                ▼                                                 │
+│           🎉 v2.5 RELEASE                                        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Diciembre 2024
+
+| Semana | Feature | Descripción | Dependencias |
+|--------|---------|-------------|--------------|
+| 1 | ✅ Phase 1 | Cleanup completado | - |
+| 2 | Feature 4 | Security Hardening (High severity) | Phase 1 |
+| 3 | Feature 1 | Real-Time Usage - Backend | Feature 4 |
+| 4 | Feature 1 | Real-Time Usage - Frontend | Feature 1 Backend |
 
 ```
 Diciembre 2024:
 ├── Semana 1: ✅ Phase 1 Cleanup completado
-├── Semana 2: Feature 1 - Real-Time Usage (Backend)
-├── Semana 3: Feature 1 - Real-Time Usage (Frontend)
-└── Semana 4: Feature 4 - Security Hardening (High severity)
-    ├── Eliminar credenciales por defecto
-    ├── Separar JWT_SECRET de ENCRYPTION_KEY
-    └── Rate limiting en endpoints sensibles
+├── Semana 2: Feature 4 - Security Hardening
+│   ├── Eliminar credenciales por defecto en config.py
+│   ├── Separar JWT_SECRET de ENCRYPTION_KEY
+│   ├── Rate limiting en /certificates/{id}/private-key
+│   └── Sanitizar input cert_name (injection prevention)
+├── Semana 3: Feature 1 - Real-Time Usage (Backend)
+│   ├── Nuevo endpoint POST /certificates/batch-usage
+│   ├── Queries paralelas a F5s
+│   └── Tests de performance
+└── Semana 4: Feature 1 - Real-Time Usage (Frontend)
+    ├── Viewport-based loading
+    ├── Progressive UI updates
+    └── Deprecar llamadas a cache endpoints
+```
 
+### Enero 2025
+
+| Semana | Feature | Descripción | Dependencias |
+|--------|---------|-------------|--------------|
+| 1 | Feature 4.1 | Code Quality & Performance | Feature 4 |
+| 2 | Feature 4.2 + 2-3 | UX + Cleanup legacy | Feature 4.1 |
+| 3 | Feature 6 | Azure Container Apps | Feature 2-3 (código limpio) |
+| 4 | Feature 6 | Azure - Migración datos | Feature 6 infra |
+
+```
 Enero 2025:
-├── Semana 1-2: Feature 6 - Azure Container Apps + CI/CD
-│   ├── Crear infraestructura Azure (Bicep)
-│   ├── Configurar networking privado
-│   ├── Setup CI/CD pipeline
-│   └── Migración de datos
-├── Semana 3: Feature 7 - Azure AD SSO
-│   ├── App Registration
-│   ├── Backend JWT validation
-│   └── Frontend MSAL integration
-└── Semana 4: Feature 7 - RBAC por grupos AD
-    ├── Mapeo grupos → roles
-    ├── Testing permisos
-    └── Documentación
-
-Febrero 2025:
 ├── Semana 1: Feature 4.1 - Code Quality & Performance
-│   ├── Fix N+1 queries
-│   ├── Migrar print() → logging
-│   ├── Custom exception classes
-│   └── Type hints en services
-├── Semana 2: Feature 4.2 - UX Improvements
-│   ├── Export CSV/JSON
+│   ├── Fix N+1 queries (joinedload)
+│   ├── Migrar print() → logging module
+│   ├── Custom exception classes (CMTException)
+│   └── Type hints en services/*.py
+├── Semana 2: Feature 4.2 + 2-3 - UX + Cleanup
+│   ├── Export CSV/JSON en CertificateTable
 │   ├── Retry con exponential backoff
-│   ├── Loading states
-│   └── Remover console.log producción
-├── Semana 3: Feature 2-3 - Cleanup & Refactor
-│   ├── Eliminar código legacy cache
-│   └── Refactor f5_service_logic.py
-└── Semana 4: Feature 5 - Dashboard métricas + Release
-    └── 🎉 Release v2.5 
+│   ├── Remover console.log en producción
+│   ├── Eliminar tablas cache deprecated
+│   └── Refactor f5_service_logic.py (dividir módulos)
+├── Semana 3: Feature 6 - Azure Container Apps (Infra)
+│   ├── Crear infraestructura con Bicep
+│   ├── Configurar VNet + Private Endpoints
+│   ├── Setup GitHub Actions CI/CD
+│   └── Deploy PostgreSQL Flexible Server
+└── Semana 4: Feature 6 - Azure (Migración)
+    ├── Migrar datos de VM actual
+    ├── Testing en staging
+    ├── Cutover a producción
+    └── Monitoreo post-migración
+```
 
-Marzo-Abril 2025 (v3.0):
+### Febrero 2025
+
+| Semana | Feature | Descripción | Dependencias |
+|--------|---------|-------------|--------------|
+| 1 | Feature 7 | Azure AD SSO | Feature 6 (en Azure) |
+| 2 | Feature 7 | RBAC por grupos AD | Feature 7 SSO |
+| 3 | Feature 11 | Master Cert Registry | Feature 7 RBAC |
+| 4 | Feature 5 + Release | Dashboard + v2.5 | Feature 11 |
+
+```
+Febrero 2025:
+├── Semana 1: Feature 7 - Azure AD SSO
+│   ├── App Registration en Azure AD
+│   ├── Backend: msal + JWT validation
+│   ├── Frontend: @azure/msal-react
+│   └── Mantener fallback a auth local (transición)
+├── Semana 2: Feature 7 - RBAC por grupos AD
+│   ├── Mapeo grupos → roles en backend
+│   ├── UI: mostrar rol del usuario
+│   ├── Proteger endpoints por rol
+│   └── Documentación de grupos requeridos
+├── Semana 3: Feature 11 - Master Certificate Registry
+│   ├── Modelos MasterCertificate + DeploymentTarget
+│   ├── Migración Alembic
+│   ├── API endpoints (/master-certs/*)
+│   ├── Dashboard NOC (MasterCertDashboard.jsx)
+│   ├── Sync automático con F5
+│   └── Script importación CSV inicial
+└── Semana 4: Feature 5 + Release
+    ├── Dashboard de métricas (integrado con Feature 11)
+    ├── Testing final
+    ├── Documentación actualizada
+    └── 🎉 Release v2.5
+```
+
+### Marzo-Abril 2025 (v3.0)
+
+```
+Marzo 2025:
 ├── Semana 1-2: Feature 8 - CA Integration Layer
 │   ├── Provider abstraction base
 │   ├── DigiCert API integration
@@ -1839,32 +2159,45 @@ Marzo-Abril 2025 (v3.0):
 │   ├── Testing con CA de desarrollo
 │   ├── Pilot con subset de certificados
 │   └── Full rollout
-├── Semana 5: Feature 9 - Renewal Policies
+
+Abril 2025:
+├── Semana 1: Feature 9 - Renewal Policies
 │   ├── Policy model & UI
 │   ├── Auto-renewal scheduler
-│   └── Notification system
-└── Semana 6: Feature 10 - Audit & Compliance
-    ├── Audit logging middleware
-    ├── Compliance reports
+│   └── Notification system (Email + Teams)
+├── Semana 2: Feature 10 - Audit & Compliance
+│   ├── Audit logging middleware
+│   ├── Compliance reports (SOC2/ISO27001)
+│   └── Log retention + export
+└── Semana 3-4: Polish + Release
     └── 🎉 Release v3.0
 ```
 
-### Priorización de Features
+### Priorización de Features (Ordenada por Dependencias)
 
-| # | Feature | Versión | Prioridad | Impacto | Severidad |
-|---|---------|---------|-----------|---------|-----------|
-| 4 | **Security Hardening** | v2.5 | 🔴 Alta | Compliance | 5 High, 4 Medium |
-| 1 | Real-Time Usage Detection | v2.5 | 🔴 Alta | Precisión datos | - |
-| 6 | Azure Container Apps | v2.5 | 🔴 Alta | Estabilidad + CI/CD | - |
-| 7 | Azure AD SSO + RBAC | v2.5 | 🔴 Alta | Seguridad enterprise | - |
-| 4.1 | **Code Quality & Performance** | v2.5 | 🟡 Media | Performance | 3 High, 7 Medium |
-| 4.2 | **UX Improvements** | v2.5 | 🟡 Media | User experience | 4 Medium, 4 Low |
-| 2 | Cleanup código legacy | v2.5 | 🟡 Media | Mantenibilidad | - |
-| 3 | Refactor f5_service_logic | v2.5 | 🟡 Media | Código limpio | - |
-| 5 | Dashboard métricas | v2.5 | 🟢 Baja | UX | - |
-| **8** | **CA Integration Layer** | **v3.0** | 🔴 Alta | Zero-touch renewals | - |
-| **9** | **Renewal Policies** | **v3.0** | 🔴 Alta | Automatización | - |
-| **10** | **Audit & Compliance** | **v3.0** | 🟡 Media | Enterprise compliance | - |
+| Orden | Feature | Versión | Prioridad | Dependencias |
+|-------|---------|---------|-----------|--------------|
+| 1 | Feature 4: Security Hardening | v2.5 | 🔴 Alta | Phase 1 ✅ |
+| 2 | Feature 1: Real-Time Usage | v2.5 | 🔴 Alta | Feature 4 |
+| 3 | Feature 4.1: Code Quality | v2.5 | 🟡 Media | Feature 4 |
+| 4 | Feature 4.2 + 2-3: UX + Cleanup | v2.5 | 🟡 Media | Feature 4.1 |
+| 5 | Feature 6: Azure Container Apps | v2.5 | 🔴 Alta | Features 2-3 |
+| 6 | Feature 7: Azure AD SSO + RBAC | v2.5 | 🔴 Alta | Feature 6 |
+| 7 | **Feature 11: Master Cert Registry** | v2.5 | 🔴 Alta | Feature 7 |
+| 8 | Feature 5: Dashboard | v2.5 | 🟢 Baja | Feature 11 |
+| 9 | Feature 8: CA Integration | v3.0 | 🔴 Alta | v2.5 Release |
+| 10 | Feature 9: Renewal Policies | v3.0 | 🔴 Alta | Feature 8 |
+| 11 | Feature 10: Audit & Compliance | v3.0 | 🟡 Media | Feature 8 |
+
+### Justificación del Orden
+
+1. **Security primero** - No podemos desplegar a producción con credenciales hardcodeadas
+2. **Real-Time antes de Azure** - Simplifica el código antes de migrar
+3. **Code Quality** - Código limpio es más fácil de desplegar y mantener
+4. **Azure Container Apps** - Infraestructura estable antes de features nuevos
+5. **Azure AD SSO** - Requiere estar en Azure para App Registration
+6. **Master Cert Registry** - Requiere RBAC para permisos por equipo
+7. **Dashboard** - Se beneficia de todos los datos de Feature 11
 
 ### Resumen de Hallazgos del Análisis
 
@@ -1904,6 +2237,8 @@ Marzo-Abril 2025 (v3.0):
 | Escalabilidad | 100 certs | 500 certs | 10,000+ certs |
 | Vulnerabilidades conocidas | 8 High | 0 High | 0 High |
 | Code quality score | ~60% | ~85% | ~95% |
+| **Visibilidad multi-target** | ❌ Solo F5 | ✅ LB+Cloud+Local | ✅ Completa |
+| **Tracking por equipo** | ❌ Manual | ✅ Dashboard NOC | ✅ + Notificaciones |
 
 ---
 
