@@ -1,0 +1,124 @@
+# =============================================================================
+# CMT v2.5 - Development Docker Compose
+# =============================================================================
+# Usage: docker compose -f docker-compose.dev.yml up --build
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cmt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cmt_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-cmt}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cmt} -d ${POSTGRES_DB:-cmt}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Redis (Celery broker)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # FastAPI Backend
+  # ---------------------------------------------------------------------------
+  backend:
+    build: ./app/backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/backend:/app
+    env_file:
+      - ./.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # React Frontend (Vite dev server with HMR)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./app/frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker (background tasks)
+  # ---------------------------------------------------------------------------
+  worker:
+    build: ./app/backend
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - CELERY_LOGLEVEL=${CELERY_LOGLEVEL:-info}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-4}
+    env_file:
+      - ./.env
+    volumes:
+      - ./app/backend:/app
+    command: >
+      celery -A core.celery_worker.celery_app worker
+      --loglevel=${CELERY_LOGLEVEL:-info}
+      --concurrency=${CELERY_CONCURRENCY:-4}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Celery Beat (scheduled tasks)
+  # ---------------------------------------------------------------------------
+  beat:
+    build: ./app/backend
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - ./.env
+    volumes:
+      - ./app/backend:/app
+    command: celery -A core.celery_worker.celery_app beat --loglevel=info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data_dev:
