@@ -2,7 +2,7 @@
 
 **Versión**: CMT v2.5  
 **Fecha inicio**: 5 Diciembre 2025  
-**Estado**: 🔄 En Progreso  
+**Estado**: 🔄 En Progreso - Fase 2  
 
 ---
 
@@ -49,24 +49,31 @@ El Device Inventory Dashboard tiene una base sólida pero requiere mejoras en vi
 
 ---
 
-### **Fase 1: UX/Visual** (5-7 días)
+### **Fase 1: UX/Visual** ✅ COMPLETADA (5 Dic 2025)
 > Mejorar la presentación visual y la organización de datos
 
 | # | Task | Prioridad | Estado | Notas |
 |---|------|-----------|--------|-------|
-| 1.1 | Agregar columna Cluster | Alta | ⬜ Pendiente | Mostrar `cluster_key` como columna |
-| 1.2 | Badge de Primary | Alta | ⬜ Pendiente | Ícono ⭐ junto al hostname si `is_primary_preferred` |
-| 1.3 | Agrupación visual por Cluster | Alta | ⬜ Pendiente | Ordenar por cluster_key + separador visual |
-| 1.4 | Toggle Active/Inactive | Media | ⬜ Pendiente | Switch en la tabla para `active` field |
-| 1.5 | Ocultar columnas vacías | Baja | ⬜ Pendiente | Si ningún device tiene HA data, ocultar columna |
+| 1.1 | Agregar columna Cluster | Alta | ✅ Listo | Chip estilizado con `cluster_key` |
+| 1.2 | Badge de Primary | Alta | ✅ Listo | Ícono ⭐ junto al hostname si `is_primary_preferred` |
+| 1.3 | Agrupación visual por Cluster | Alta | ✅ Listo | Default sort por cluster_key + ip_address |
+| 1.4 | Toggle Active/Inactive | Media | ⏭️ Diferido | Mover a Fase 2 |
+| 1.5 | Ocultar columnas vacías | Baja | ⏭️ Diferido | Mover a Fase 2 |
+| 1.6 | Scan unificado (facts+certs) | Alta | ✅ Listo | Una conexión obtiene todo |
 
-**Archivos a modificar:**
-- `frontend/src/components/DeviceTable.jsx`
-- `frontend/src/pages/DevicesPage.jsx`
+**Commits:**
+- `0d60b2553` - feat(ui): Phase 1 Device Inventory improvements
+- `ef7093f0d` - feat(scan): Unified scan - facts + certificates in single connection
+
+**Archivos modificados:**
+- `frontend/src/components/DeviceTable.jsx` - Columna cluster, badge primary, sort
+- `backend/services/f5_facts.py` - Helper para facts con conexión existente
+- `backend/services/f5_service_logic.py` - Integración de facts en scan
+- `backend/populate_clusters.py` - Script para inferir clusters (50 detectados)
 
 ---
 
-### **Fase 2: Funcionalidad** (7-10 días)
+### **Fase 2: Funcionalidad** (7-10 días) 🔄 EN PROGRESO
 > Agregar capacidades que faltan
 
 | # | Task | Prioridad | Estado | Notas |
@@ -130,6 +137,9 @@ El Device Inventory Dashboard tiene una base sólida pero requiere mejoras en vi
 | Fecha | Fase | Task | Commit | Notas |
 |-------|------|------|--------|-------|
 | 2025-12-05 | — | Plan creado | — | Documento inicial |
+| 2025-12-05 | F1 | Columna Cluster + Badge Primary | `0d60b2553` | 50 clusters detectados |
+| 2025-12-05 | F1 | Scan unificado facts+certs | `ef7093f0d` | Una conexión, menos carga en F5 |
+| 2025-12-05 | F1 | **Fase 1 completada** | — | 4/6 tasks listos, 2 diferidos |
 
 ---
 
