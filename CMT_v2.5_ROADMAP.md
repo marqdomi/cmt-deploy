@@ -320,24 +320,17 @@ async def get_private_key(cert_id: int, request: Request, ...):
 
 #### 🔴 Issues de Performance (Alta Severidad)
 
-| Issue | Archivo | Impacto | Solución |
-|-------|---------|---------|----------|
-| N+1 queries en `get_cert_info` | `f5_service_logic.py:39-180` | Lentitud con muchos certs | Eager loading con `joinedload()` |
-| API calls secuenciales para decrypt | `certificates.py:144-153` | Latencia acumulada | Batch decrypt operation |
-| Cache age API call innecesario | `CertificateTable.jsx:168` | Request extra por render | Consolidar con profile lookup |
+| Issue | Archivo | Impacto | Solución | Estado |
+|-------|---------|---------|----------|--------|
+| N+1 queries en `get_cert_info` | `certificates.py` | Lentitud con muchos certs | Eager loading con `joinedload()` | ✅ |
+| API calls secuenciales para decrypt | `certificates.py` | Latencia acumulada | Fernet es local (~μs), impacto mínimo | ⚠️ Bajo impacto |
+| Cache age API call innecesario | `CertificateTable.jsx` | Request extra por render | Eliminado con sistema real-time | ✅ |
 
 ```python
-# ANTES - N+1 Query Problem
-def get_certificates():
-    certs = db.query(Certificate).all()
-    for cert in certs:
-        device = db.query(Device).filter(Device.id == cert.device_id).first()  # N queries!
-
-# DESPUÉS - Eager Loading
-def get_certificates():
-    certs = db.query(Certificate).options(
-        joinedload(Certificate.device)
-    ).all()  # 1 query con JOIN!
+# IMPLEMENTADO - Eager Loading
+certs = db.query(Certificate).options(
+    joinedload(Certificate.device)
+).filter(Certificate.id.in_(request.cert_ids)).all()  # 1 query con JOIN!
 ```
 
 #### 🟡 Issues de Código (Media Severidad)
