@@ -196,14 +196,33 @@ en una limpieza futura cuando se confirme estabilidad del nuevo sistema.
 
 ### Feature 3: Refactor de f5_service_logic.py
 
-**Estado**: 📋 Planificado  
+**Estado**: ✅ Completado (Fase 1 - Proxy Pattern)  
 **Prioridad**: Media  
 **Esfuerzo estimado**: 1-2 días
 
 #### Problema Actual
-`f5_service_logic.py` tiene 942 líneas con múltiples responsabilidades mezcladas.
+`f5_service_logic.py` tiene 1200+ líneas con múltiples responsabilidades mezcladas.
 
-#### Propuesta de Estructura
+#### Implementación Realizada (Fase 1)
+Se implementó un **patrón proxy** que permite migración gradual:
+
+```
+backend/services/f5/
+├── __init__.py        # Re-exports desde f5_service_logic.py
+```
+
+**Uso nuevo:**
+```python
+from services.f5 import connect_to_f5, get_batch_usage_state
+```
+
+**Beneficios:**
+- 100% backwards compatible
+- Nombres públicos sin prefijo underscore
+- Base para refactor incremental en v3.0
+- `sanitize_f5_object_name()` para seguridad
+
+#### Propuesta para v3.0 (Refactor Completo)
 ```
 backend/services/f5/
 ├── __init__.py
@@ -218,28 +237,28 @@ backend/services/f5/
 
 ### Feature 4: Mejoras de Seguridad (Expandido)
 
-**Estado**: 📋 Planificado  
+**Estado**: ✅ Completado  
 **Prioridad**: Alta  
 **Severidad de hallazgos**: 🔴 5 High, 🟡 4 Medium
 
 #### 🔴 Issues de Alta Severidad
 
-| Issue | Archivo | Solución |
-|-------|---------|----------|
-| Credenciales DB por defecto en código | `config.py:7` | Requerir `.env` explícito, fallar si no existe |
-| Chain name hardcodeado | Múltiples archivos | Variable de entorno `DEFAULT_CERT_CHAIN` |
-| JWT secret fallback a ENCRYPTION_KEY | `config.py:17-21` | Separar secrets, eliminar fallback inseguro |
-| Private keys expuestas sin rate limiting | `certificates.py:375` | Agregar rate limit + audit log obligatorio |
-| Debug logging en producción | `api.js:20` | Condicionar a `NODE_ENV !== 'production'` |
+| Issue | Archivo | Solución | Estado |
+|-------|---------|----------|--------|
+| Credenciales DB por defecto en código | `config.py:7` | Requerir `.env` explícito, fallar si no existe | ✅ |
+| Chain name hardcodeado | Múltiples archivos | Variable de entorno `DEFAULT_CERT_CHAIN` | ✅ |
+| JWT secret fallback a ENCRYPTION_KEY | `config.py:17-21` | Separar secrets, eliminar fallback inseguro | ✅ |
+| Private keys expuestas sin rate limiting | `certificates.py:375` | Agregar rate limit + audit log obligatorio | ✅ |
+| Debug logging en producción | `api.js:20` | Condicionar a `NODE_ENV !== 'production'` | ✅ |
 
 #### 🟡 Issues de Media Severidad
 
-| Issue | Archivo | Solución |
-|-------|---------|----------|
-| CORS con wildcard en métodos | `main.py:27-32` | Restringir a `GET, POST, PUT, DELETE` específicos |
-| Token JWT en localStorage | `AuthContext.jsx` | Migrar a httpOnly cookies (XSS protection) |
-| Sin validación de complejidad de password | `auth_service.py` | Regex: min 8 chars, mayúscula, número, especial |
-| Input sin sanitizar en cert_name | `f5_service_logic.py:27` | Sanitizar para prevenir command injection |
+| Issue | Archivo | Solución | Estado |
+|-------|---------|----------|--------|
+| CORS con wildcard en métodos | `main.py:27-32` | Restringir a `GET, POST, PUT, DELETE` específicos | ✅ |
+| Token JWT en localStorage | `AuthContext.jsx` | Migrar a httpOnly cookies (XSS protection) | 📋 Diferido |
+| Sin validación de complejidad de password | `auth_service.py` | Regex: min 8 chars, mayúscula, número, especial | ✅ |
+| Input sin sanitizar en cert_name | `f5_service_logic.py:27` | Sanitizar para prevenir command injection | ✅ |
 
 #### Implementación Propuesta
 
@@ -282,20 +301,20 @@ async def get_private_key(cert_id: int, request: Request, ...):
 
 #### Checklist de Seguridad
 
-- [ ] Eliminar todos los valores por defecto de credenciales
-- [ ] Separar JWT_SECRET_KEY de ENCRYPTION_KEY
-- [ ] Implementar rate limiting en endpoints sensibles
-- [ ] Migrar token a httpOnly cookies
-- [ ] Agregar validación de password
-- [ ] Sanitizar input de cert_name
-- [ ] Configurar CORS restrictivo
-- [ ] Remover console.debug en producción
+- [x] Eliminar todos los valores por defecto de credenciales
+- [x] Separar JWT_SECRET_KEY de ENCRYPTION_KEY
+- [x] Implementar rate limiting en endpoints sensibles
+- [ ] Migrar token a httpOnly cookies (diferido - requiere cambios de auth flow)
+- [x] Agregar validación de password (validate_password_complexity en auth_service.py)
+- [x] Sanitizar input de cert_name (sanitize_f5_object_name en f5_service_logic.py)
+- [x] Configurar CORS restrictivo (allow_methods y allow_headers restringidos)
+- [x] Remover console.debug en producción (ya envueltos en import.meta.env.DEV)
 
 ---
 
 ### Feature 4.1: Mejoras de Código y Performance (NUEVO)
 
-**Estado**: 📋 Planificado  
+**Estado**: ✅ Completado  
 **Prioridad**: Media  
 **Severidad de hallazgos**: 🔴 3 High (Performance), 🟡 7 Medium
 
