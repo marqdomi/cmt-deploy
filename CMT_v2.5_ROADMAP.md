@@ -32,7 +32,7 @@ CMT v2.5 enfoca las mejoras en **rendimiento**, **precisión de datos en tiempo 
 
 ### Feature 1: Real-Time Usage Detection (Opción D)
 
-**Estado**: 📋 Planificado  
+**Estado**: ✅ Completado  
 **Prioridad**: Alta  
 **Esfuerzo estimado**: 2-3 días
 
@@ -122,6 +122,46 @@ const observer = new IntersectionObserver((entries) => {
 - `backend/db/models.py` - Remover modelos de cache
 - `frontend/src/components/CertificateTable.jsx` - Implementar lazy loading
 - `backend/main.py` - Remover router de f5_cache
+
+#### Implementación Realizada ✅
+
+**Fecha**: Diciembre 2025
+
+**Backend (Python/FastAPI):**
+1. `services/f5_service_logic.py` - Nueva función `get_batch_usage_state()`:
+   - Abre UNA conexión F5 por device
+   - Descarga todos los perfiles SSL + VIPs en una sola consulta
+   - Computa usage_state localmente para N certificados
+   - Rendimiento: ~2-4 segundos para cualquier cantidad de certs del mismo device
+
+2. `api/endpoints/certificates.py` - Nuevo endpoint `POST /certificates/batch-usage`:
+   - Request: `{ cert_ids: [1, 2, 3...] }`
+   - Response: `{ usage_states: { "1": "active", "2": "no-profiles"... }, errors: {...} }`
+   - Agrupa certificados por device_id automáticamente
+
+**Frontend (React):**
+1. `hooks/useUsageStateLoader.js` - Custom hook para lazy loading:
+   - Cache en memoria de usage_states
+   - Debouncing de requests (150ms)
+   - Soporte para batch de hasta 50 certs por request
+
+2. `components/CertificateTable.jsx`:
+   - Nueva columna "Status" con chips visuales (In Use, Orphan, Unused)
+   - Botón "Refresh Usage" para actualizar en tiempo real
+   - Indicador de loading por certificado
+
+3. `pages/InventoryPage.jsx`:
+   - Integración del hook useUsageStateLoader
+   - Auto-carga de usage states para primera página
+   - Filtros de orphan/unused usan usage_states en tiempo real
+
+4. `services/api.js` - Nueva función `getBatchUsageStates()`
+
+5. `components/ExportButton.jsx` - Exportación usa usage_states en tiempo real
+
+**Nota**: Las tablas de cache (`CertProfileLinksCache`, `SslProfileVipsCache`, `SslProfilesCache`) 
+aún existen como fallback pero ya no son necesarias para el flujo principal. Se pueden eliminar 
+en una limpieza futura cuando se confirme estabilidad del nuevo sistema.
 
 ---
 
