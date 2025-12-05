@@ -2,7 +2,7 @@
 
 **Versión**: CMT v2.5  
 **Fecha inicio**: 5 Diciembre 2025  
-**Estado**: 🔄 En Progreso - Fase 2  
+**Estado**: ✅ Completado - Fases 1-3 | Fase 4 opcional  
 
 ---
 
@@ -73,46 +73,58 @@ El Device Inventory Dashboard tiene una base sólida pero requiere mejoras en vi
 
 ---
 
-### **Fase 2: Funcionalidad** (7-10 días) 🔄 EN PROGRESO
+### **Fase 2: Funcionalidad** ✅ COMPLETADA (5 Dic 2025)
 > Agregar capacidades que faltan
 
 | # | Task | Prioridad | Estado | Notas |
 |---|------|-----------|--------|-------|
-| 2.1 | Device Detail Drawer | Alta | ⬜ Pendiente | Panel lateral con toda la info del device |
-| 2.2 | Edit Device Modal | Alta | ⬜ Pendiente | Editar hostname, IP, site, version |
-| 2.3 | Filtros avanzados | Media | ⬜ Pendiente | Chips para HA state, sync status, site |
-| 2.4 | Health Check indicator | Media | ⬜ Pendiente | Mostrar si device respondió en último refresh |
-| 2.5 | Export CSV | Baja | ⬜ Pendiente | Botón para descargar inventario |
-| 2.6 | Bulk Set Credentials | Baja | ⬜ Pendiente | Setear credenciales a múltiples devices |
+| 2.1 | Device Detail Drawer | Alta | ✅ Listo | Panel lateral con toda la info del device |
+| 2.2 | Edit Device Modal | Alta | ✅ Listo | Editar hostname, IP, site, cluster_key, active |
+| 2.3 | Filtros avanzados | Media | ✅ Listo | Chips para HA state, sync status, site, health |
+| 2.4 | Health Check indicator | Media | ✅ Listo | Colores en scan_status + dot en hostname |
+| 2.5 | Export CSV | Baja | ✅ Listo | Botón para descargar inventario completo |
+| 2.6 | Bulk Set Credentials | Baja | ✅ Listo | Dialog para setear credenciales a múltiples devices |
 
-**Archivos a crear:**
-- `frontend/src/components/DeviceDetailDrawer.jsx`
-- `frontend/src/components/EditDeviceDialog.jsx`
+**Commits:**
+- `ccf17151b` - feat(ui): Device Detail Drawer with tabs
+- `6b87573f4` - Phase 2: Device Inventory UX enhancements
 
-**Archivos a modificar:**
-- `frontend/src/pages/DevicesPage.jsx`
-- `frontend/src/components/DeviceTable.jsx`
-- `backend/api/endpoints/devices.py` (endpoint PUT para editar)
+**Archivos creados:**
+- `frontend/src/components/DeviceDetailDrawer.jsx` - Drawer lateral con 3 tabs
+- `frontend/src/components/EditDeviceDialog.jsx` - Modal de edición
+- `frontend/src/components/FilterChipsBar.jsx` - Barra de filtros con chips
+- `frontend/src/components/BulkCredentialsDialog.jsx` - Dialog para bulk credentials
+
+**Archivos modificados:**
+- `frontend/src/pages/DevicesPage.jsx` - Integración de todos los componentes
+- `frontend/src/components/DeviceTable.jsx` - Filtros, health indicators, onDevicesLoaded
+- `frontend/src/components/BulkActionsBar.jsx` - Botón Set Credentials
+- `backend/api/endpoints/devices.py` - PUT endpoint para editar device
 
 ---
 
-### **Fase 3: Calidad de Código** (3-4 días)
+### **Fase 3: Calidad de Código** ✅ COMPLETADA (5 Dic 2025)
 > Refactorizar y estandarizar
 
 | # | Task | Prioridad | Estado | Notas |
 |---|------|-----------|--------|-------|
-| 3.1 | Unificar tipos TypeScript | Alta | ⬜ Pendiente | Crear `types/device.ts` con un solo type |
-| 3.2 | Constantes para estados | Media | ⬜ Pendiente | `HA_STATES`, `SYNC_COLORS` como enums |
-| 3.3 | Migrar DevicesPage a TS | Media | ⬜ Pendiente | `.jsx` → `.tsx` |
-| 3.4 | Usar API client consistente | Baja | ⬜ Pendiente | Todo via `api/devices.ts` |
+| 3.1 | Unificar tipos TypeScript | Alta | ✅ Listo | `types/device.ts` con Device, DeviceRow, etc. |
+| 3.2 | Constantes para estados | Media | ✅ Listo | `constants/deviceStates.ts` con helpers |
+| 3.3 | Migrar DevicesPage a TS | Media | ✅ Listo | `.jsx` → `.tsx` con interfaces |
+| 3.4 | Usar API client consistente | Baja | ✅ Listo | CRUD functions en `api/devices.ts` |
 
-**Archivos a crear:**
-- `frontend/src/types/device.ts`
-- `frontend/src/constants/deviceStates.ts`
+**Commits:**
+- `1a206a67a` - Phase 3: Code Quality - TypeScript types and API standardization
 
-**Archivos a migrar:**
-- `DevicesPage.jsx` → `DevicesPage.tsx`
-- `DeviceTable.jsx` → `DeviceTable.tsx`
+**Archivos creados:**
+- `frontend/src/types/device.ts` - Tipos centralizados
+- `frontend/src/types/index.ts` - Re-export
+- `frontend/src/constants/deviceStates.ts` - Constantes y helpers
+
+**Archivos migrados/modificados:**
+- `frontend/src/pages/DevicesPage.jsx` → `DevicesPage.tsx`
+- `frontend/src/api/devices.ts` - CRUD functions agregadas
+- `frontend/src/pages/vips/*.tsx` - Usar tipos centralizados
 
 ---
 
@@ -140,6 +152,14 @@ El Device Inventory Dashboard tiene una base sólida pero requiere mejoras en vi
 | 2025-12-05 | F1 | Columna Cluster + Badge Primary | `0d60b2553` | 50 clusters detectados |
 | 2025-12-05 | F1 | Scan unificado facts+certs | `ef7093f0d` | Una conexión, menos carga en F5 |
 | 2025-12-05 | F1 | **Fase 1 completada** | — | 4/6 tasks listos, 2 diferidos |
+| 2025-12-05 | F2 | Device Detail Drawer | `ccf17151b` | Drawer con 3 tabs (Info, Certs, Raw) |
+| 2025-12-05 | F2 | Edit Modal + Filtros + Health | `6b87573f4` | FilterChipsBar, health dots |
+| 2025-12-05 | F2 | Export CSV + Bulk Credentials | `6b87573f4` | BulkCredentialsDialog |
+| 2025-12-05 | F2 | **Fase 2 completada** | — | 6/6 tasks listos |
+| 2025-12-05 | F3 | Tipos TypeScript centralizados | `1a206a67a` | types/device.ts |
+| 2025-12-05 | F3 | Constantes de estados | `1a206a67a` | constants/deviceStates.ts |
+| 2025-12-05 | F3 | DevicesPage migrado a TS | `1a206a67a` | .jsx → .tsx |
+| 2025-12-05 | F3 | **Fase 3 completada** | — | 4/4 tasks listos |
 
 ---
 
