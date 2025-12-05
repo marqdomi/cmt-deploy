@@ -167,7 +167,7 @@ en una limpieza futura cuando se confirme estabilidad del nuevo sistema.
 
 ### Feature 2: Cleanup de Código Legacy
 
-**Estado**: ✅ Parcialmente completado (Phase 1)  
+**Estado**: ✅ Completado  
 **Prioridad**: Media
 
 #### Completado en Phase 1
@@ -177,11 +177,20 @@ en una limpieza futura cuando se confirme estabilidad del nuevo sistema.
 - [x] Consistencia docker-compose (POSTGRES_USER/DB = `cmt`)
 - [x] Agregar `venv/` a `.gitignore`
 
-#### Pendiente para v2.5
-- [ ] Eliminar `cache_builder.py` (después de Feature 1)
-- [ ] Eliminar `f5_cache.py` (después de Feature 1)
+#### Completado en Phase 2 (v2.5)
+- [x] Marcar `cache_builder.py` como deprecated (banner prominente)
+- [x] Marcar `f5_cache.py` como deprecated (banner + tag en API docs)
+- [x] Marcar tablas de cache en `models.py` como deprecated
+- [x] Actualizar tags en `main.py` para reflejar deprecation
+- [x] Limpiar TODOs obsoletos y comentarios
+- [x] Arreglar SyntaxWarning en docstring de `devices.py`
+
+#### Pendiente para v3.0 (Eliminación completa)
+- [ ] Eliminar `cache_builder.py` completamente
+- [ ] Eliminar `f5_cache.py` completamente
+- [ ] Eliminar tablas de cache de `models.py`
+- [ ] Crear migración para DROP de tablas de cache
 - [ ] Refactorizar `f5_service_logic.py` (942 líneas → módulos separados)
-- [ ] Eliminar código comentado y TODOs obsoletos
 
 ---
 
