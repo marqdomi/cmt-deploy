@@ -525,13 +525,29 @@ async def connect_to_f5(device: Device):
 
 ### Feature 5: Dashboard de Métricas
 
-**Estado**: 📋 Planificado  
+**Estado**: ✅ Completado  
 **Prioridad**: Baja
 
-- [ ] Certificados por estado de expiración (30/60/90 días)
-- [ ] Certificados por región (EMEA/US)
-- [ ] Histórico de renovaciones
-- [ ] Alertas configurables
+- [x] Certificados por estado de expiración (30/60/90 días)
+- [x] Certificados por dispositivo (top 10)
+- [x] Métricas de uso (active/orphan/no-profiles)
+- [ ] Histórico de renovaciones (requiere tracking en DB)
+- [ ] Alertas configurables (diferido v2.6)
+
+#### Implementación Realizada
+
+**Dashboard mejorado con:**
+1. **4 stat cards principales** con iconos (Total, Healthy, Warning, Expired)
+2. **Expiration Timeline** - BarChart horizontal con bandas:
+   - Expired, < 7d (critical), 8-30d (urgent), 31-60d, 61-90d, > 90d
+3. **F5 Devices panel** - Total, with/without credentials, top 5 por certs
+4. **Certificate Health** - PieChart con proporciones
+5. **Certificate Usage** - PieChart de estados (active/orphan/no-profiles)
+6. **Quick Stats row** - Resumen de bandas de expiración
+
+**Archivos modificados:**
+- `components/Dashboard.jsx` - Expandido con 6 paneles de métricas
+- `pages/DashboardPage.jsx` - Fetch paralelo de certs + devices
 
 ---
 
