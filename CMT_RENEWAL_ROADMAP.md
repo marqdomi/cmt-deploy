@@ -1,6 +1,6 @@
 # CMT Certificate Renewal - Roadmap de Mejoras
 
-> **Última actualización:** 6 de Diciembre 2025  
+> **Última actualización:** 7 de Diciembre 2025  
 > **Branch:** v2.5  
 > **Estado General:** ⚡ En desarrollo activo
 
@@ -93,7 +93,7 @@ GET  /api/v1/audit/actions           - Lista de acciones disponibles
 | ID | Mejora | Estado | Prioridad | Esfuerzo | Impacto |
 |----|--------|--------|-----------|----------|---------|
 | 2.1 | CSR Generator en CMT | ✅ **Completado** | Alta | Alto | Muy Alto |
-| 2.2 | Batch Renewal (Wildcards) | 🔴 Pendiente | Media | Medio | Alto |
+| 2.2 | Batch Renewal (Wildcards) | ✅ **Completado** | Media | Medio | Alto |
 | 2.3 | Import desde Vault | 🔴 Pendiente | Media | Medio | Medio |
 
 #### 2.1 CSR Generator en CMT ✅ COMPLETADO
@@ -126,9 +126,40 @@ GET  /api/v1/csr/{id}/download-pfx - Descarga PFX
 DELETE /api/v1/csr/{id}      - Elimina request
 ```
 
-#### 2.2 Batch Renewal
+#### 2.2 Batch Renewal ✅ COMPLETADO
 - **Descripción:** Renovar wildcard en múltiples dispositivos simultáneamente
 - **Beneficio:** Eficiencia en renovaciones masivas
+
+**Componentes implementados:**
+
+**Backend (Python):**
+- `api/endpoints/batch.py` - Endpoints para operaciones batch
+  - GET /wildcards - Lista wildcards agrupados por cantidad de dispositivos
+  - GET /wildcards/{name} - Detalle de wildcard con dispositivos asociados
+  - POST /deploy - Inicia deployment batch con BackgroundTask
+  - GET /deploy/{batch_id} - Estado de operación batch
+  - GET /deploy - Lista de operaciones batch activas
+- Tracking en memoria (producción usaría Redis)
+
+**Frontend (TypeScript):**
+- `types/batch.ts` - BatchDeployStatus, WildcardGroup, WildcardDeviceInfo, etc.
+- `api/batch.ts` - Cliente HTTP para batch API
+- `pages/BatchRenewalPage.tsx` - Página completa con:
+  - Stats cards (total wildcards, dispositivos afectados, operaciones activas)
+  - Tabla expandible de wildcards agrupados
+  - Diálogo de deployment con selección de dispositivos
+  - Tracking de progreso con polling
+- Ruta `/batch-renewal` en App.jsx
+- Link en MainLayout (icono Autorenew)
+
+**Endpoints API:**
+```
+GET  /api/v1/batch/wildcards           - Lista wildcards agrupados
+GET  /api/v1/batch/wildcards/{name}    - Detalle wildcard + dispositivos
+POST /api/v1/batch/deploy              - Inicia batch deployment
+GET  /api/v1/batch/deploy/{batch_id}   - Estado de operación
+GET  /api/v1/batch/deploy              - Lista operaciones activas
+```
 
 #### 2.3 Import desde Vault
 - **Descripción:** Obtener PFX directamente de Vault Solera
@@ -150,7 +181,7 @@ DELETE /api/v1/csr/{id}      - Elimina request
 
 ```
 Fase 1: ████████████████████ 100% (3/3 completadas) ✅
-Fase 2: ████████████░░░░░░░░ 33% (1/3 completadas)  
+Fase 2: █████████████░░░░░░░ 66% (2/3 completadas)  
 Fase 3: ░░░░░░░░░░░░░░░░░░░░ 0% (0/3 completadas)
 ```
 
@@ -197,7 +228,36 @@ Fase 3: ░░░░░░░░░░░░░░░░░░░░ 0% (0/3 com
 
 ---
 
-### Sesión: 5 de Diciembre 2025 - CSR GENERATOR COMPLETADO
+### Sesión: 7 de Diciembre 2025 - BATCH RENEWAL COMPLETADO
+**Implementación de Batch Renewal para Wildcards (Fase 2.2):**
+
+**Backend:**
+- ✅ `api/endpoints/batch.py` con 5 endpoints para operaciones batch
+- ✅ Agrupación de wildcards por cantidad de dispositivos
+- ✅ Background tasks para deployments largos
+- ✅ Tracking de estado de operaciones batch
+- ✅ Router registrado en `main.py`
+
+**Frontend:**
+- ✅ `types/batch.ts` - Tipos TypeScript completos
+- ✅ `api/batch.ts` - Cliente HTTP
+- ✅ `pages/BatchRenewalPage.tsx` - Página completa con:
+  - Stats cards (wildcards, dispositivos, operaciones)
+  - Tabla expandible con wildcards agrupados
+  - Diálogo de deployment batch con selección de dispositivos
+  - Polling de progreso de operaciones
+- ✅ Ruta `/batch-renewal` en App.jsx
+- ✅ Navegación en MainLayout (icono Autorenew)
+
+**Problema resuelto:**
+- Fix de error 500 en login: SQLAlchemy no podía determinar join condition entre Certificate y RenewalRequest debido a múltiples FKs
+- Solución: Agregar `foreign_keys=[original_certificate_id]` al relationship
+
+**Siguiente paso:** Fase 2.3 - Import desde Vault
+
+---
+
+### Sesión: 6 de Diciembre 2025 - FASE 1 COMPLETADA
 **Implementación completa del CSR Generator:**
 
 **Backend:**
