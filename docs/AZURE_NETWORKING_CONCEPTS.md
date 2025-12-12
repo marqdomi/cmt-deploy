@@ -226,9 +226,9 @@ VNet CMT ──► Hub ──► VPN Gateway compartido ──► Solera On-Prem
 
 ## 🛠️ 6. Container Apps y VNet Integration
 
-### Estado Actual: ✅ VNet Integration Habilitado
+### Estado Actual: ⚠️ VNet Integration Parcial
 
-El Container Apps Environment **YA tiene VNet integration**:
+El Container Apps Environment tiene VNet integration pero con limitaciones:
 
 ```yaml
 Environment: cae-certmgr-prd-usc
@@ -236,31 +236,35 @@ Environment: cae-certmgr-prd-usc
   State: Succeeded
   VNet Integration:
     Subnet: snet-aca-certmgr-prd-usc (10.105.68.0/25)
-    Internal: false (accesible desde internet Y VNet)
+    Internal: false (accesible desde internet)
     Static IP: 172.168.236.98
+    Workload Profile: Consumption
   Infrastructure Resource Group: ME_cae-certmgr-prd-usc_rg-netops-certmgr-prd-usc_centralus
 ```
 
-### Flujo de tráfico (implementado):
+### ⚠️ Limitación Identificada:
+
+El workload profile `Consumption` con `internal: false` NO soporta routing completo:
+- El tráfico de **INGRESS** puede usar VNet
+- El tráfico de **EGRESS** sale por infraestructura managed de Azure (IP: 172.x.x.x)
+- Las rutas del vWAN/VNet **NO se aplican** al tráfico de salida
 
 ```
-Container Apps ──► VNet (10.105.68.x) ──► Peering ──► NetOps Hub ──► vWAN Hub ──► VPN ──► F5s
+Container Apps ──► Azure Managed Infra (172.x.x.x) ──X──► NO llega a F5s
                            │
-                           └── Tráfico privado (no sale a Internet)
-                           └── Rutas propagadas desde vWAN
-                           └── F5s accesibles en 10.119.x.x
+                           └── Tráfico NO pasa por VNet routing
+                           └── Rutas del vWAN NO se aplican
+                           └── F5s (10.119.x.x) INACCESIBLES
 ```
 
-### Verificación de conectividad:
+### Solución requerida:
 
-```bash
-# Desde el Container Apps backend, debería poder alcanzar:
-# - NetOps Hub: 10.105.64.x ✅
-# - Solera F5s: 10.119.x.x (via VPN)
+Para que el tráfico de egress use las rutas del vWAN, se necesita una de estas opciones:
+1. **Container Apps Environment interno** con workload profiles dedicados
+2. **Azure Firewall + UDR** como next hop
+3. **VM Proxy** en la VNet como intermediario
 
-# Test de conectividad (ejecutar desde el container):
-# curl -k https://10.119.x.x:8443/mgmt/tm/sys/version
-```
+Ver [CONNECTIVITY_NEXT_STEPS.md](./CONNECTIVITY_NEXT_STEPS.md) para análisis detallado de opciones.
 
 ---
 
@@ -269,11 +273,18 @@ Container Apps ──► VNet (10.105.68.x) ──► Peering ──► NetOps H
 | # | Tarea | Estado | Nota |
 |---|-------|--------|------|
 | 1 | Conectar NetOps Hub al vWAN | ✅ Completado | `conn-netops-hub-prd-usc` |
-| 2 | Eliminar VPN Gateway innecesario | ⏳ En proceso | `vpngw-certmgr-prd-usc` |
-| 3 | Eliminar GatewaySubnet de CMT VNet | Pendiente | Después de (2) |
-| 4 | Eliminar Public IP del gateway | Pendiente | `pip-vpngw-certmgr-prd-usc` |
-| 5 | Verificar propagación de rutas | Pendiente | Rutas a 10.119.x.x |
-| 6 | Probar conectividad a F5s | Pendiente | curl desde Container Apps |
+| 2 | Conectar CMT VNet al vWAN | ✅ Completado | `conn-certmgr-prd-usc` |
+| 3 | Eliminar VPN Gateway innecesario | ✅ Completado | `vpngw-certmgr-prd-usc` eliminado |
+| 4 | Eliminar GatewaySubnet de CMT VNet | ✅ Completado | Subnet eliminada |
+| 5 | Eliminar Public IP del gateway | ✅ Completado | `pip-vpngw-certmgr-prd-usc` eliminada |
+| 6 | Configurar Celery Worker | ✅ Completado | Worker y Beat funcionando |
+| 7 | Configurar Redis | ✅ Completado | SSL habilitado |
+| 8 | Verificar propagación de rutas | ✅ Completado | Rutas en vWAN hub OK |
+| 9 | Probar conectividad a F5s | ⚠️ Bloqueado | Requiere cambio de arquitectura |
+
+### Próximos pasos (pendientes):
+
+Ver [CONNECTIVITY_NEXT_STEPS.md](./CONNECTIVITY_NEXT_STEPS.md) para opciones de solución.
 
 ---
 
